@@ -1,0 +1,44 @@
+{
+  "cameras": {
+    "cam1": {
+      "name": "Front Gate",
+      "rtsp": "rtsp://remote:Lollipop!@192.168.1.32/grandstream/main_stream",
+      "enabled": true,
+      "door": {
+        "enabled": true,
+        "ip": "192.168.1.32",
+        "auth": "remote:Lollipop!"
+      }
+    },
+    "cam2": {
+      "name": "Camera 2",
+      "rtsp": "",
+      "enabled": false,
+      "door": {
+        "enabled": false,
+        "ip": "",
+        "auth": ""
+      }
+    },
+    "cam3": {
+      "name": "Camera 3",
+      "rtsp": "",
+      "enabled": false,
+      "door": {
+        "enabled": false,
+        "ip": "",
+        "auth": ""
+      }
+    },
+    "cam4": {
+      "name": "Camera 4",
+      "rtsp": "",
+      "enabled": false,
+      "door": {
+        "enabled": false,
+        "ip": "",
+        "auth": ""
+      }
+    }
+  }
+}
