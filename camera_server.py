@@ -4,7 +4,7 @@ Camera Web Server - Configurable via Web UI
 Edit camera settings at /settings
 """
 
-import threading, os, json, cv2, argparse
+import threading, os, json, cv2, argparse, subprocess
 from flask import Flask, render_template_string, Response, request, jsonify, redirect, url_for
 
 # Parse arguments
@@ -103,13 +103,33 @@ def door_open(cam_id):
     if not cam: return jsonify({'error': 'Unknown'}), 404
     door = cam.get('door', {})
     if not door.get('enabled') or not door.get('ip'): return jsonify({'error': 'No door'}), 400
-    req = urllib.request.Request(f"http://{door['ip']}/api/door/open")
-    if door.get('auth'):
-        req.add_header('Authorization', f"Basic {base64.b64encode(door['auth'].encode()).decode()}")
+    
+    door_ip = door.get('ip', '')
+    auth = door.get('auth', '')
+    sip_dtmf = door.get('dtmf', '00')
+    
+    # Try SIP DTMF first (more reliable)
+    try:
+        result = subprocess.run(
+            ['sipp', door_ip, '-s', sip_dtmf, '-d', sip_dtmf, '-l', '1', '-m', '1'],
+            capture_output=True, timeout=20,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        if result.returncode == 0:
+            return jsonify({'status': 'ok', 'door': 'opened', 'method': 'sip-dtmf'})
+    except FileNotFoundError:
+        print("sipp not found")
+    except Exception as e:
+        print(f"SIP error: {e}")
+    
+    # Fallback to HTTP API
+    req = urllib.request.Request(f"http://{door_ip}/api/door/open")
+    if auth:
+        req.add_header('Authorization', f"Basic {base64.b64encode(auth.encode()).decode()}")
     ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
     try:
         urllib.request.urlopen(req, timeout=5, context=ctx)
-        return jsonify({'status': 'ok', 'door': 'opened'})
+        return jsonify({'status': 'ok', 'door': 'opened', 'method': 'http'})
     except Exception as e: return jsonify({'error': str(e)}), 500
 
 @app.route('/api/states')
@@ -173,8 +193,43 @@ header{background:#2d2d2d;padding:15px 20px;display:flex;justify-content:space-b
 <script>
 function testCall(id){fetch('/call-trigger/'+id,{method:'POST'})}
 function clearCall(id){fetch('/call-clear/'+id,{method:'POST'})}
-async function openDoor(id){try{let r=await fetch('/door-open/'+id,{method:'POST'});let j=await r.json();if(j.error)alert(j.error);}catch(e){alert(e)}}
-async function check(){try{let r=await fetch('/api/states');let s=await r.json();let any=false;for(let[c,v]of Object.entries(s)){let e=document.getElementById('cam-'+c),st=document.getElementById('status-'+c);if(v){e.classList.add('calling');st.classList.add('calling');st.tex}st.textContent='RINGING';any=true}else{e.classList.remove('calling');st.classList.remove('calling');st.textContent='LIVE'}}
+async function openDoor(id){
+    try{
+        let r=await fetch('/door-open/'+id,{method:'POST'});
+        let j=await r.json();
+        if(j.error){
+            alert('Error: '+j.error);
+        }else{
+            alert('Door opened via '+j.method+'! 🔓');
+        }
+    }catch(e){
+        alert('Error: '+e);
+    }
+}
+async function check(){
+    try{
+        let r=await fetch('/api/states');
+        let s=await r.json();
+        let any=false;
+        for(let[c,v]of Object.entries(s)){
+            let e=document.getElementById('cam-'+c);
+            let st=document.getElementById('status-'+c);
+            if(v){
+                e.classList.add('calling');
+                st.classList.add('calling');
+                st.textContent='RINGING';
+                any=true;
+            }else{
+                e.classList.remove('calling');
+                st.classList.remove('calling');
+                st.textContent='LIVE';
+            }
+        }
+        document.getElementById('alert').classList.toggle('show',any);
+    }catch(e){}
+}
+setInterval(check,500);
+check();
 document.getElementById('alert').classList.toggle('show',any)}catch(e){}}setInterval(check,500);check();
 </script></body></html>'''
 
