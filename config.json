@@ -7,7 +7,7 @@
       "door": {
         "enabled": true,
         "ip": "192.168.1.32",
-        "auth": "remote:Lollipop!"
+        "auth": "admin:M@dhous3!"
       }
     },
     "cam2": {
