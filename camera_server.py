@@ -4,7 +4,7 @@ Camera Web Server - Configurable via Web UI
 Edit camera settings at /settings
 """
 
-import threading, os, json, cv2, argparse, subprocess
+import threading, os, json, cv2, argparse, subprocess, subprocess
 from flask import Flask, render_template_string, Response, request, jsonify, redirect, url_for
 
 # Parse arguments
@@ -108,7 +108,19 @@ def door_open(cam_id):
     auth = door.get('auth', '')
     sip_dtmf = door.get('dtmf', '00')
     
-    # Try SIP DTMF first (more reliable)
+    # Try Python SIP script first (sends DTMF via SIP INFO)
+    try:
+        result = subprocess.run(
+            ['python3', 'sip_door.py', door_ip, sip_dtmf],
+            capture_output=True, timeout=20,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        if result.returncode == 0 and b'SUCCESS' in result.stdout:
+            return jsonify({'status': 'ok', 'door': 'opened', 'method': 'sip-dtmf'})
+    except Exception as e:
+        print(f"SIP script error: {e}")
+    
+    # Try sipp as backup
     try:
         result = subprocess.run(
             ['sipp', door_ip, '-s', sip_dtmf, '-d', sip_dtmf, '-l', '1', '-m', '1'],
@@ -116,11 +128,9 @@ def door_open(cam_id):
             cwd=os.path.dirname(os.path.abspath(__file__))
         )
         if result.returncode == 0:
-            return jsonify({'status': 'ok', 'door': 'opened', 'method': 'sip-dtmf'})
-    except FileNotFoundError:
-        print("sipp not found")
+            return jsonify({'status': 'ok', 'door': 'opened', 'method': 'sip-sipp'})
     except Exception as e:
-        print(f"SIP error: {e}")
+        print(f"sipp error: {e}")
     
     # Fallback to HTTP API
     req = urllib.request.Request(f"http://{door_ip}/api/door/open")
@@ -160,7 +170,11 @@ header{background:#2d2d2d;padding:15px 20px;display:flex;justify-content:space-b
 .camera-name{position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.7);padding:5px 10px;border-radius:4px;font-size:0.9rem;z-index:10}
 .camera-status{position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.7);padding:5px 10px;border-radius:4px;font-size:0.8rem;z-index:10;color:#4f4}
 .camera-status.calling{color:#f44}
-.video{position:relative;width:100%;padding-top:56.25%}
+.video{position:relative;width:100%;padding-top:56.25%;cursor:pointer}
+.video:hover{box-shadow:inset 0 0 20px rgba(74,144,226,0.3)}
+.camera.fullscreen{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:999;padding:20px;background:#000}
+.camera.fullscreen .video{height:calc(100vh - 80px);padding:0}
+.camera.fullscreen .video img{object-fit:contain;height:100%}
 .video img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
 .controls{padding:10px;display:flex;gap:10px;background:#2a2a2a;flex-wrap:wrap}
 .btn{flex:1;min-width:90px;padding:8px;border:none;border-radius:4px;cursor:pointer;background:#444;color:#fff;font-size:0.85rem}
@@ -178,11 +192,10 @@ header{background:#2d2d2d;padding:15px 20px;display:flex;justify-content:space-b
 <div class="camera" id="cam-{{cam_id}}">
 <div class="camera-name">{{cam.name}}</div>
 <div class="camera-status" id="status-{{cam_id}}">LIVE</div>
-<div class="video"><img src="/video/{{cam_id}}"></div>
+<div class="video" onclick="toggleFullscreen('cam-{{cam_id}}')" title="Click to expand"><img src="/video/{{cam_id}}"></div>
 <div class="controls">
 <button class="btn" onclick="testCall('{{cam_id}}')">Test Call</button>
 <button class="btn" onclick="clearCall('{{cam_id}}')">Clear</button>
-{% if cam.door and cam.door.enabled %}<button class="btn btn-door" onclick="openDoor('{{cam_id}}')">Open Door</button>{% endif %}
 </div></div>
 {% else %}
 <div class="empty"><h3>{{cam.name}}</h3><p>Not configured. Go to Settings to enable.</p></div>
@@ -193,6 +206,17 @@ header{background:#2d2d2d;padding:15px 20px;display:flex;justify-content:space-b
 <script>
 function testCall(id){fetch('/call-trigger/'+id,{method:'POST'})}
 function clearCall(id){fetch('/call-clear/'+id,{method:'POST'})}
+
+function toggleFullscreen(camId){
+    var el = document.getElementById(camId);
+    if(el.classList.contains('fullscreen')){
+        el.classList.remove('fullscreen');
+    }else{
+        // Remove fullscreen from others
+        document.querySelectorAll('.camera.fullscreen').forEach(c => c.classList.remove('fullscreen'));
+        el.classList.add('fullscreen');
+    }
+}
 async function openDoor(id){
     try{
         let r=await fetch('/door-open/'+id,{method:'POST'});
@@ -230,7 +254,6 @@ async function check(){
 }
 setInterval(check,500);
 check();
-document.getElementById('alert').classList.toggle('show',any)}catch(e){}}setInterval(check,500);check();
 </script></body></html>'''
 
 SETTINGS = '''<!DOCTYPE html>
