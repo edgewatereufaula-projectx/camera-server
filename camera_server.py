@@ -4,8 +4,13 @@ Camera Web Server - Configurable via Web UI
 Edit camera settings at /settings
 """
 
-import threading, os, json, cv2
+import threading, os, json, cv2, argparse
 from flask import Flask, render_template_string, Response, request, jsonify, redirect, url_for
+
+# Parse arguments
+parser = argparse.ArgumentParser()
+parser.add_argument('--port', type=int, default=9090, help='Port to run server on')
+args = parser.parse_args()
 
 app = Flask(__name__)
 CONFIG_FILE = 'config.json'
@@ -206,6 +211,6 @@ h1{margin-bottom:20px}.back{color:#fff;display:inline-block;margin-bottom:20px}
 </form></body></html>'''
 
 if __name__ == '__main__':
-    print("Camera Server - http://0.0.0.0:9090")
-    print("Settings: http://0.0.0.0:9090/settings")
-    app.run(host='0.0.0.0', port=9090, debug=False, threaded=True)
+    print(f"Camera Server - http://0.0.0.0:{args.port}")
+    print(f"Settings: http://0.0.0.0:{args.port}/settings")
+    app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True)
