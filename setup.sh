@@ -1,11 +1,22 @@
 #!/bin/bash
 # Edgeless UC Camera Server - One-Command Setup
-# Run: curl -sL https://raw.githubusercontent.com/YOUR_REPO/main/setup.sh | bash
+# Run: curl -sL https://raw.githubusercontent.com/edgewatereufaula-projectx/camera-server/main/setup.sh | bash
 
 set -e
 
 echo "📹 Edgeless UC Camera Server Setup"
 echo "===================================="
+
+# Ask for hostname
+echo ""
+read -p "Enter hostname for this device (e.g., doorcam, camera1): " -r hostname
+hostname="${hostname:-doorcam}"
+echo "Setting hostname to: $hostname"
+
+# Change hostname
+sudo hostnamectl set-hostname "$hostname"
+echo "127.0.1.1 $hostname" | sudo tee -a /etc/hosts > /dev/null
+echo "✅ Hostname set to: $hostname"
 
 # Check for Python
 if ! command -v python3 &> /dev/null; then
@@ -21,35 +32,38 @@ sudo apt install -y libopencv-dev ffmpeg 2>/dev/null || true
 echo "Installing Python packages..."
 pip3 install --user opencv-python-headless flask numpy 2>/dev/null || true
 
+# Ask for port
+echo ""
+read -p "Use port 80 (requires sudo) or 9090 (default)? [80/9090]: " -r port
+port="${port:-9090}"
+
+# Validate port
+if [ "$port" = "80" ]; then
+    echo "Note: Port 80 requires running the server with sudo"
+    sudo apt install -y authbind 2>/dev/null || true
+fi
+
 # Create app directory
 APP_DIR="$HOME/camera-server"
 mkdir -p "$APP_DIR"
 cd "$APP_DIR"
 
-# Create default config if not exists
-if [ ! -f config.json ]; then
-    cat > config.json << 'EOF'
-{
-  "cameras": {
-    "cam1": {"name": "Camera 1", "rtsp": "", "enabled": false, "door": {"enabled": false, "ip": "", "auth": ""}},
-    "cam2": {"name": "Camera 2", "rtsp": "", "enabled": false, "door": {"enabled": false, "ip": "", "auth": ""}},
-    "cam3": {"name": "Camera 3", "rtsp": "", "enabled": false, "door": {"enabled": false, "ip": "", "auth": ""}},
-    "cam4": {"name": "Camera 4", "rtsp": "", "enabled": false, "door": {"enabled": false, "ip": "", "auth": ""}}
-  }
-}
-EOF
-fi
-
-# Create camera_server.py if not exists (inline minimal version)
-if [ ! -f camera_server.py ]; then
-    echo "Error: camera_server.py not found!"
-    echo "Please copy camera_server.py to the Pi first."
+# Copy files from GitHub or local
+echo ""
+read -p "Download from GitHub? (y/n): " -r github
+if [[ $github =~ ^[Yy]$ ]]; then
+    curl -sL https://raw.githubusercontent.com/edgewatereufaula-projectx/camera-server/main/camera_server.py -o camera_server.py
+    curl -sL https://raw.githubusercontent.com/edgewatereufaula-projectx/camera-server/main/requirements.txt -o requirements.txt
+    curl -sL https://raw.githubusercontent.com/edgewatereufaula-projectx/camera-server/main/config.json -o config.json
+    echo "✅ Downloaded from GitHub"
+else
+    echo "Please copy camera_server.py manually to the Pi first."
     exit 1
 fi
 
 # Create systemd service
 echo "Creating auto-start service..."
-cat > "$HOME/camera-server.service" << 'EOF'
+cat > "$HOME/camera-server.service" << EOF
 [Unit]
 Description=Edgeless UC Camera Server
 After=network.target
@@ -57,10 +71,11 @@ After=network.target
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HOME/camera-server
-ExecStart=/usr/bin/python3 $HOME/camera-server/camera_server.py
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/python3 $APP_DIR/camera_server.py --port $port
 Restart=always
 RestartSec=10
+Environment=PORT=$port
 
 [Install]
 WantedBy=multi-user.target
@@ -78,11 +93,15 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     sudo systemctl start camera-server
     echo "✅ Service enabled and started"
 else
-    echo "Run 'python3 $APP_DIR/camera_server.py' to start manually"
+    if [ "$port" = "80" ]; then
+        echo "Run with sudo: sudo python3 $APP_DIR/camera_server.py --port 80"
+    else
+        echo "Run: python3 $APP_DIR/camera_server.py --port $port"
+    fi
 fi
 
 echo ""
 echo "🎉 Setup complete!"
-IP=$(hostname -I | awk '{print $1}')
-echo "   Main view:   http://$IP:9090"
-echo "   Settings:    http://$IP:9090/settings"
+echo "   Hostname:     $hostname.local"
+echo "   Main view:    http://$hostname.local:$port"
+echo "   Settings:     http://$hostname.local:$port/settings"
