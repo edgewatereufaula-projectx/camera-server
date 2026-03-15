@@ -4,7 +4,7 @@ Camera Web Server - Configurable via Web UI
 Edit camera settings at /settings
 """
 
-import threading, os, json, cv2, argparse, subprocess, subprocess
+import threading, os, json, cv2, argparse, subprocess, time, subprocess
 from flask import Flask, render_template_string, Response, request, jsonify, redirect, url_for
 
 # Parse arguments
@@ -42,18 +42,44 @@ def generate_mjpeg(cam_id):
     if not cam or not cam.get('enabled'): return
     rtsp = cam.get('rtsp', '')
     if not rtsp: return
-    cap = cv2.VideoCapture(rtsp)
-    if not cap.isOpened(): return
-    while True:
-        ret, frame = cap.read()
-        if not ret: cap.release(); cap = cv2.VideoCapture(rtsp); continue
-        with call_states_lock:
-            if call_states.get(cam_id):
+    
+    consecutive_errors = 0
+    max_retries = 10
+    
+    while consecutive_errors < max_retries:
+        cap = cv2.VideoCapture(rtsp)
+        if not cap.isOpened():
+            consecutive_errors += 1
+            print(f"Cam {cam_id} failed to open, retry {consecutive_errors}/{max_retries}")
+            time.sleep(2)
+            continue
+        
+        consecutive_errors = 0  # Reset on successful open
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print(f"Cam {cam_id} stream lost, reconnecting...")
+                cap.release()
+                time.sleep(1)
+                break
+            
+            # Check call status
+            with call_states_lock:
+                is_calling = call_states.get(cam_id, False)
+            
+            # Draw red border if calling
+            if is_calling:
                 h, w = frame.shape[:2]
                 cv2.rectangle(frame, (0,0), (w-1,h-1), (0,0,255), 20)
-        ret, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ret: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
-    cap.release()
+            
+            ret, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ret: 
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
+        
+        time.sleep(1)
+    
+    print(f"Cam {cam_id} max retries exceeded, giving up")
 
 @app.route('/')
 def index(): 
@@ -63,8 +89,65 @@ def index():
 @app.route('/video/<cam_id>') 
 def video(cam_id): return Response(generate_mjpeg(cam_id), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+app.config['SECRET_KEY'] = 'nira-camera-secret'
+app.config['SETTINGS_PASSWORD'] = 'M@dhous3!'
+
+def check_auth():
+    from flask import session
+    return session.get('settings_auth', False)
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
+    from flask import session, redirect, url_for
+    
+    # Check password first
+    if request.method == 'POST' and 'unlock' in request.form:
+        password = request.form.get('password', '')
+        if password == app.config['SETTINGS_PASSWORD']:
+            session['settings_auth'] = True
+        else:
+            return render_template_string('''<!DOCTYPE html>
+<html><head><meta name="viewport" content="width=device-width">
+<style>
+body{background:#1a1a1a;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+.box{background:#222;padding:30px;border-radius:8px;text-align:center}
+input{padding:10px;border-radius:4px;border:1px solid #444;background:#333;color:#fff;margin:10px 0;width:200px}
+button{padding:10px 30px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer}
+.error{color:#f44;margin-top:10px}
+</style></head>
+<body>
+<div class="box">
+<h2>🔒 Settings Password</h2>
+<form method="POST">
+<input type="password" name="password" placeholder="Enter password" required>
+<br><button type="submit" name="unlock" value="1">Unlock</button>
+</form>
+<p class="error">Incorrect password</p>
+</div>
+</body></html>''')
+        return redirect(url_for('settings'))
+    
+    # Check if authenticated
+    if not check_auth():
+        return render_template_string('''<!DOCTYPE html>
+<html><head><meta name="viewport" content="width=device-width">
+<style>
+body{background:#1a1a1a;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+.box{background:#222;padding:30px;border-radius:8px;text-align:center}
+input{padding:10px;border-radius:4px;border:1px solid #444;background:#333;color:#fff;margin:10px 0;width:200px}
+button{padding:10px 30px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer}
+</style></head>
+<body>
+<div class="box">
+<h2>🔒 Settings Password</h2>
+<form method="POST">
+<input type="password" name="password" placeholder="Enter password" required>
+<br><button type="submit" name="unlock" value="1">Unlock</button>
+</form>
+</div>
+</body></html>''')
+    
+    # Normal settings handling
     if request.method == 'POST':
         cams = {}
         for i in range(1, 5):
@@ -289,6 +372,21 @@ h1{margin-bottom:20px}.back{color:#fff;display:inline-block;margin-bottom:20px}
 </form></body></html>'''
 
 if __name__ == '__main__':
+    import sys
+    
+    def auto_restart():
+        """Restart the server every 15 minutes to prevent memory issues"""
+        print("Auto-restart scheduled in 15 minutes...")
+        time.sleep(15 * 60)  # 15 minutes
+        print("Auto-restarting server...")
+        python = sys.executable
+        os.execl(python, python, *sys.argv)
+    
+    # Start auto-restart thread
+    restart_thread = threading.Thread(target=auto_restart, daemon=True)
+    restart_thread.start()
+    
     print(f"Camera Server - http://0.0.0.0:{args.port}")
     print(f"Settings: http://0.0.0.0:{args.port}/settings")
+    print(f"Auto-restart enabled (every 4 hours)")
     app.run(host='0.0.0.0', port=args.port, debug=False, threaded=True)
