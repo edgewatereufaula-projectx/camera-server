@@ -38,40 +38,44 @@ def init_call_states():
 init_call_states()
 
 def generate_mjpeg(cam_id):
+    """Generate MJPEG from camera stream - simplified stable version"""
     cam = get_cameras().get(cam_id)
     if not cam or not cam.get('enabled'): return
     rtsp = cam.get('rtsp', '')
     if not rtsp: return
     
-    consecutive_errors = 0
-    max_retries = 10
-    
-    while consecutive_errors < max_retries:
-        cap = cv2.VideoCapture(rtsp)
-        if not cap.isOpened():
-            consecutive_errors += 1
-            print(f"Cam {cam_id} failed to open, retry {consecutive_errors}/{max_retries}")
-            time.sleep(2)
-            continue
-        
-        consecutive_errors = 0  # Reset on successful open
-        
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print(f"Cam {cam_id} stream lost, reconnecting...")
-                cap.release()
-                time.sleep(1)
-                break
+    while True:
+        try:
+            cap = cv2.VideoCapture(rtsp)
+            if not cap.isOpened():
+                print(f"Cam {cam_id} failed to open, retrying in 30s...")
+                time.sleep(30)
+                continue
             
-            # Check call status
-            with call_states_lock:
-                is_calling = call_states.get(cam_id, False)
-            
-            # Draw red border if calling
-            if is_calling:
-                h, w = frame.shape[:2]
-                cv2.rectangle(frame, (0,0), (w-1,h-1), (0,0,255), 20)
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print(f"Cam {cam_id} stream lost, reconnecting...")
+                    cap.release()
+                    time.sleep(5)
+                    break
+                
+                # Check call status
+                with call_states_lock:
+                    is_calling = call_states.get(cam_id, False)
+                
+                # Draw red border if calling
+                if is_calling:
+                    h, w = frame.shape[:2]
+                    cv2.rectangle(frame, (0,0), (w-1,h-1), (0,0,255), 20)
+                
+                ret, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret: 
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + jpg.tobytes() + b'\r\n')
+                
+        except Exception as e:
+            print(f"Cam {cam_id} error: {e}, restarting in 30s...")
+            time.sleep(30)
             
             ret, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ret: 
@@ -375,9 +379,9 @@ if __name__ == '__main__':
     import sys
     
     def auto_restart():
-        """Restart the server every 15 minutes to prevent memory issues"""
-        print("Auto-restart scheduled in 15 minutes...")
-        time.sleep(15 * 60)  # 15 minutes
+        """Restart the server every 4 hours to prevent memory issues"""
+        print("Auto-restart scheduled in 4 hours...")
+        time.sleep(4 * 60 * 60)  # 4 hours
         print("Auto-restarting server...")
         python = sys.executable
         os.execl(python, python, *sys.argv)
