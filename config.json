@@ -12,8 +12,8 @@
     },
     "cam2": {
       "name": "Camera 2",
-      "rtsp": "",
-      "enabled": false,
+      "rtsp": "rtsp://remote:Lollipop!@192.168.1.32/grandstream/main_stream",
+      "enabled": true,
       "door": {
         "enabled": false,
         "ip": "",
